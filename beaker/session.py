@@ -1,5 +1,6 @@
 from ._compat import PY2, pickle, http_cookies, unicode_text, b64encode, b64decode, string_type
 
+import binascii
 import os
 import time
 from datetime import datetime, timedelta
@@ -8,7 +9,6 @@ from beaker import crypto, util
 from beaker.cache import clsmap
 from beaker.exceptions import BeakerException, InvalidCryptoBackendError
 from beaker.cookie import SimpleCookie
-import uuid
 
 
 months = (None, "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -31,8 +31,12 @@ class _InvalidSignatureType(object):
 InvalidSignature = _InvalidSignatureType()
 
 
-def _session_id():
-    return uuid.uuid4().hex
+DEFAULT_ID_NUM_BYTES = 16
+
+
+def _session_id(nbytes):
+    h = binascii.hexlify(os.urandom(nbytes))
+    return h if PY2 else h.decode('ascii')
 
 
 class SignedCookie(SimpleCookie):
@@ -130,6 +134,7 @@ class Session(_ConfigurableSession):
     :param crypto_type: encryption module to use
     :param samesite: SameSite value for the cookie -- should be either 'Lax',
                      'Strict', or None.
+    :param id_num_bytes: Size of id in bytes. Defaults to 20.
     """
     def __init__(self, request, id=None, invalidate_corrupt=False,
                  use_cookies=True, type=None, data_dir=None,
@@ -138,7 +143,7 @@ class Session(_ConfigurableSession):
                  data_serializer='pickle', secret=None,
                  secure=False, namespace_class=None, httponly=False,
                  encrypt_key=None, validate_key=None, encrypt_nonce_bits=DEFAULT_NONCE_BITS,
-                 crypto_type='default', samesite='Lax',
+                 crypto_type='default', samesite='Lax', id_num_bytes=DEFAULT_ID_NUM_BYTES,
                  **namespace_args):
         _ConfigurableSession.__init__(
             self,
@@ -194,6 +199,7 @@ class Session(_ConfigurableSession):
         self.id = id
         self.accessed_dict = {}
         self.invalidate_corrupt = invalidate_corrupt
+        self.id_num_bytes = id_num_bytes
 
         if self.use_cookies:
             cookieheader = request.get('cookie', '')
@@ -309,7 +315,7 @@ class Session(_ConfigurableSession):
             util.warn('Python 2.6+ is required to use httponly')
 
     def _create_id(self, set_new=True):
-        self.id = _session_id()
+        self.id = _session_id(self.id_num_bytes)
 
         if set_new:
             self.is_new = True
@@ -576,13 +582,14 @@ class CookieSession(Session):
     :param crypto_type: The crypto module to use.
     :param samesite: SameSite value for the cookie -- should be either 'Lax',
                      'Strict', or None.
+    :param id_num_bytes: Size of id in bytes. Defaults to 20.
     """
     def __init__(self, request, key='beaker.session.id', timeout=None,
                  save_accessed_time=True, cookie_expires=True, cookie_domain=None,
                  cookie_path='/', encrypt_key=None, validate_key=None, secure=False,
                  httponly=False, data_serializer='pickle',
                  encrypt_nonce_bits=DEFAULT_NONCE_BITS, invalidate_corrupt=False,
-                 crypto_type='default', samesite='Lax',
+                 crypto_type='default', samesite='Lax', id_num_bytes=DEFAULT_ID_NUM_BYTES,
                  **kwargs):
         _ConfigurableSession.__init__(
             self,
@@ -610,6 +617,7 @@ class CookieSession(Session):
         self.httponly = httponly
         self.samesite = samesite
         self.invalidate_corrupt = invalidate_corrupt
+        self.id_num_bytes = id_num_bytes
         self._set_serializer(data_serializer)
 
         try:
@@ -634,7 +642,7 @@ class CookieSession(Session):
                 input=None,
             )
 
-        self['_id'] = _session_id()
+        self['_id'] = _session_id(self.id_num_bytes)
         self.is_new = True
 
         # If we have a cookie, load it
@@ -706,7 +714,7 @@ class CookieSession(Session):
         if '_creation_time' not in self:
             self['_creation_time'] = time.time()
         if '_id' not in self:
-            self['_id'] = _session_id()
+            self['_id'] = _session_id(self.id_num_bytes)
         self['_accessed_time'] = time.time()
 
         val = self._encrypt_data()
@@ -748,7 +756,7 @@ class CookieSession(Session):
     def invalidate(self):
         """Clear the contents and start a new session"""
         self.clear()
-        self['_id'] = _session_id()
+        self['_id'] = _session_id(self.id_num_bytes)
 
 
 class SessionObject(object):
